@@ -1,6 +1,7 @@
 services:
   api:
     build: .
+    image: be-wwg-aws-mailbridge-api:1.1
     container_name: mailBridge_service
     ports:
       - "8000:8000"
