@@ -16,8 +16,8 @@ async def load_jwt_credentials() -> tuple[str, str]:
     """
     sql = """
       SELECT
-        MAX(CASE WHEN descrip = 'JWTUSER' THEN codlval END) AS usuario,
-        MAX(CASE WHEN descrip = 'JWTPASS' THEN codlval END) AS password
+        MAX(CASE WHEN descrip = 'JWTUSER' THEN Encrypt_pkg.DECRYPT(codlval) END) AS usuario,
+        MAX(CASE WHEN descrip = 'JWTPASS' THEN Encrypt_pkg.DECRYPT(codlval) END) AS password
       FROM ACSELD.lval
      WHERE tipolval = :tipolval
        AND stslval  = :stslval
