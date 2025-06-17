@@ -22,7 +22,7 @@ class LvalService:
         Retorna un único CODLVAL para una descripción corta dada.
         """
         sql = '''
-            SELECT CODLVAL
+            SELECT Encrypt_pkg.DECRYPT(CODLVAL) CODLVAL
               FROM ACSELD.LVAL
              WHERE TIPOLVAL = :tipolval
                AND DESCRIP  = :descrip
@@ -64,7 +64,7 @@ class LvalService:
         Carga .
         """
         sql = '''
-            SELECT CODLVAL, DESCLONG
+            SELECT Encrypt_pkg.DECRYPT(CODLVAL) CODLVAL, DESCLONG
               FROM ACSELD.LVAL
              WHERE TIPOLVAL = :tipolval
                AND STSLVAL  = 'ACT'
@@ -90,7 +90,7 @@ class LvalConfig:
         """
         if cls._cache is None:
             sql = '''
-                SELECT DESCRIP, CODLVAL
+                SELECT DESCRIP, Encrypt_pkg.DECRYPT(CODLVAL) CODLVAL
                   FROM ACSELD.LVAL
                  WHERE TIPOLVAL = :tipolval
                    AND STSLVAL  = 'ACT'
