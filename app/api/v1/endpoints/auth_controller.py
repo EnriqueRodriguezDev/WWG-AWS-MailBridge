@@ -1,17 +1,18 @@
 # app/api/v1/endpoints/auth_controller.py
 from fastapi import APIRouter, HTTPException, status
+
+from app.core.dependencies import _perform_database_access_check
 from app.schemas.Auth import LoginRequest, Token
 from app.core.auth import authenticate_user, create_access_token
 
 router = APIRouter(tags=["auth"])
-
-
 @router.post("/login", response_model=Token, summary="Obtener token JWT")
 async def login(creds: LoginRequest):
     """
     Valida usuario/clave y retorna un JWT.
     """
-    ok = await authenticate_user(creds.username, creds.password)
+    _perform_database_access_check(creds.database)
+    ok = await authenticate_user(creds.database, creds.username, creds.password)
     if not ok:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

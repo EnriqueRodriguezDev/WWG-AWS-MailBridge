@@ -18,6 +18,7 @@ RUN apt-get update && \
 RUN mkdir -p /opt/oracle/instantclient
 
 # 3) Set Oracle environment variables
+ENV APP_ENV=qa
 ENV ORACLE_HOME=/opt/oracle/instantclient
 ENV LD_LIBRARY_PATH=$ORACLE_HOME
 ENV PATH=$ORACLE_HOME:$PATH
