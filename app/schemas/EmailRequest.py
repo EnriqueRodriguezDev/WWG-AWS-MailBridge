@@ -1,9 +1,11 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Literal
+from pydantic import EmailStr, BaseModel
+from app.core.config import settings
 
-from pydantic import EmailStr, BaseModel, HttpUrl
-
+DatabaseLiteral = Literal[tuple(settings.AVAILABLE_DATABASES)]
 
 class EmailRequest(BaseModel):
+    database: DatabaseLiteral
     from_email: EmailStr
     to:         List[EmailStr]
     cc:         List[EmailStr]      = []
@@ -12,16 +14,16 @@ class EmailRequest(BaseModel):
     body:       Optional[str]       = None
     html_body:  Optional[str]       = None
     attachments: List[str]         = []
+    tags:        Dict[str, str]        = {}
 
 class FileItem(BaseModel):
+    database: DatabaseLiteral
     filename:   str
     blob:       bytes
     id_proceso: int
 
-'''class UploadRequest(BaseModel):
-    files: Optional[List[FileItem]] = None'''
-
 class UploadRequest(BaseModel):
+    database: DatabaseLiteral
     filename: str
     blob: bytes
     id_proceso: int

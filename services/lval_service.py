@@ -1,4 +1,54 @@
-# src/services/lval_service.py
+'''import logging
+from typing import Any, Dict, Optional
+
+from app.core.config import settings
+from app.db.oracle import execute_query
+
+logger = logging.getLogger(__name__)
+
+class LvalConfig:
+    """
+    Permite cargar la tabla ACSELD.LVAL como un diccionario {CODLVAL: descrip_desencriptado},
+    para usar de forma similar a una configuración.
+    Cachea los resultados en memoria para llamadas subsecuentes.
+    """
+    _cache: Optional[Dict[str, Any]] = None
+
+    @classmethod
+    async def load(cls, tipolval: str) -> Dict[str, Any]:
+        """
+        Carga una sola vez el mapeo CODLVAL -> DESCRIP (desencriptado) y lo cachea.
+        """
+        if cls._cache is None:
+            sql =
+                SELECT CODLVAL, Encrypt_pkg.DECRYPT(DESCRIP) AS DESCRIP_DECRYPTED
+                  FROM ACSELD.LVAL
+                 WHERE TIPOLVAL = :tipolval
+                   AND STSLVAL  = 'ACT'
+
+            params = {'tipolval': tipolval}
+            rows = await execute_query(sql, params)
+
+            cls._cache = {r['CODLVAL']: r['DESCRIP_DECRYPTED'] for r in rows}
+            logger.debug('Cached LvalConfig: %s', cls._cache)
+        return cls._cache
+
+    @classmethod
+    async def get(cls, key: str, default: Any = None) -> Any:
+        """
+        Obtiene la DESCRIP desencriptada asociada al CODLVAL dado, o el valor por defecto si no existe.
+        Usa el caché si ya se cargó.
+        """
+        if cls._cache is None:
+            logger.warning(
+                "LvalConfig cache not loaded. Please ensure `await LvalConfig.load(your_tipolval)` "
+                "is called at application startup or before first use of `get`."
+            )
+            return default
+
+        # La clave 'key' es el CODLVAL, y el valor recuperado es la DESCRIP desencriptada.
+        return cls._cache.get(key, default)'''
+
 import logging
 from typing import Any, Dict, Optional
 
@@ -7,105 +57,49 @@ from app.db.oracle import execute_query
 
 logger = logging.getLogger(__name__)
 
-class LvalService:
-    """
-    Servicio para acceder a la tabla WWS.LVAL:
-      - Obtener CODLVAL por DESCRIP
-      - Obtener DESCLONG por CODLVAL
-      - Cargar todo como diccionario opcional
-    Filtra siempre por TIPOLVAL = settings.DB_AWS_TIPOLVAL y STSLVAL = 'ACT'.
-    """
-
-    @staticmethod
-    async def get_codlval(descrip: str) -> Optional[str]:
-        """
-        Retorna un único CODLVAL para una descripción corta dada.
-        """
-        sql = '''
-            SELECT Encrypt_pkg.DECRYPT(CODLVAL) CODLVAL
-              FROM ACSELD.LVAL
-             WHERE TIPOLVAL = :tipolval
-               AND DESCRIP  = :descrip
-               AND STSLVAL  = 'ACT'
-        '''
-        params = {'tipolval': settings.DB_AWS_TIPOLVAL, 'descrip': descrip}
-        rows = await execute_query(sql, params)
-        if not rows:
-            logger.debug('No CODLVAL para descrip=%s', descrip)
-            return None
-        codlval = rows[0]['CODLVAL']
-        logger.debug('Found CODLVAL=%s for DESCRIP=%s', codlval, descrip)
-        return codlval
-
-    @staticmethod
-    async def get_desclong(codlval: str) -> Optional[str]:
-        """
-        Retorna la descripción larga (DESCLONG) para un CODLVAL dado.
-        """
-        sql = '''
-            SELECT DESCLONG
-              FROM ACSELD.LVAL
-             WHERE TIPOLVAL = :tipolval
-               AND CODLVAL  = :codlval
-               AND STSLVAL  = 'ACT'
-        '''
-        params = {'tipolval': settings.DB_AWS_TIPOLVAL, 'codlval': codlval}
-        rows = await execute_query(sql, params)
-        if not rows:
-            logger.debug('No DESCLONG para codlval=%s', codlval)
-            return None
-        desclong = rows[0]['DESCLONG']
-        logger.debug('Found DESCLONG for CODLVAL=%s: %s', codlval, desclong)
-        return desclong
-
-    @staticmethod
-    async def load_all(tipolval: str) -> Dict[str, Any]:
-        """
-        Carga .
-        """
-        sql = '''
-            SELECT Encrypt_pkg.DECRYPT(CODLVAL) CODLVAL, DESCLONG
-              FROM ACSELD.LVAL
-             WHERE TIPOLVAL = :tipolval
-               AND STSLVAL  = 'ACT'
-        '''
-        params = {'tipolval': tipolval}
-        rows = await execute_query(sql, params)
-        codlvals = [r['CODLVAL'] for r in rows]
-        logger.debug('Loaded %d CODLVALs', len(codlvals))
-        return codlvals
-
 class LvalConfig:
     """
-    Permite cargar la tabla WWS.LVAL como un diccionario {descrip: codlval},
-    para usar igual que StrategyConfig: cfg = await LvalConfig.load(), cfg.get(descrip).
+    Permite cargar la tabla ACSELD.LVAL como un diccionario {CODLVAL: descrip_desencriptado},
+    para usar de forma similar a una configuración.
     Cachea los resultados en memoria para llamadas subsecuentes.
     """
-    _cache: Optional[Dict[str, Any]] = None
+    _cache: Dict[str, Dict[str, Any]] = {}
 
     @classmethod
-    async def load(cls, tipolval: str) -> Dict[str, Any]:
+    async def load(cls, tipolval: str, db_name: str) -> Dict[str, Any]: # Añade db_name
         """
-        Carga una sola vez el mapeo DESCRIP -> CODLVAL y lo cachea.
+        Carga una sola vez el mapeo CODLVAL -> DESCRIP (desencriptado) y lo cachea
+        para un `tipolval` y `db_name` específicos.
         """
-        if cls._cache is None:
+        cache_key = (db_name, tipolval) # Clave de caché compuesta
+
+        if cache_key not in cls._cache: # Comprueba si ya está en caché
             sql = '''
-                SELECT DESCRIP, Encrypt_pkg.DECRYPT(CODLVAL) CODLVAL
+                SELECT CODLVAL, Encrypt_pkg.DECRYPT(DESCRIP) AS DESCRIP_DECRYPTED
                   FROM ACSELD.LVAL
                  WHERE TIPOLVAL = :tipolval
                    AND STSLVAL  = 'ACT'
             '''
             params = {'tipolval': tipolval}
-            rows = await execute_query(sql, params)
-            cls._cache = {r['DESCRIP']: r['CODLVAL'] for r in rows}
-            logger.debug('Cached LvalConfig: %s', cls._cache)
-        return cls._cache
+            rows = await execute_query(sql, params, db_name=db_name)
+
+            cls._cache[cache_key] = {r['CODLVAL']: r['DESCRIP_DECRYPTED'] for r in rows}
+            logger.debug('Cached LvalConfig for %s: %s', cache_key, cls._cache[cache_key])
+        return cls._cache[cache_key]
 
     @classmethod
-    async def get(cls, key: str, default: Any = None) -> Any:
+    async def get(cls, key: str, tipolval: str, db_name: str, default: Any = None) -> Any: # Añade tipolval y db_name
         """
-        Obtiene el CODLVAL asociado a la DESCRIP dada, o default si no existe.
-        Usa cache si ya se cargó.
+        Obtiene la DESCRIP desencriptada asociada al CODLVAL dado, o el valor por defecto si no existe.
+        Usa el caché si ya se cargó. Requiere tipolval y db_name para la clave de caché.
         """
-        cfg = await cls.load()
-        return cfg.get(key, default)
+        cache_key = (db_name, tipolval)
+
+        if cache_key not in cls._cache:
+            logger.warning(
+                "LvalConfig cache for %s not loaded. Please ensure `await LvalConfig.load(tipolval, db_name)` "
+                "is called at application startup or before first use of `get`.", cache_key
+            )
+            return default
+
+        return cls._cache[cache_key].get(key, default)

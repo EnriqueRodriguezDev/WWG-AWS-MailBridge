@@ -3,13 +3,26 @@ import json
 import os
 from typing import List, Dict, Any, Optional
 import boto3
-import oracledb
+from botocore.exceptions import ClientError
 from fastapi import Form
 from pydantic import EmailStr, HttpUrl
 
 from app.core.config import settings
-from services.lval_service import LvalService, LvalConfig
+from services.lval_service import LvalConfig
 from utils.compress_pdf_bytes import compress_pdf_bytes
+from app.core.http_erros import HttpErrors
+
+ALLOWED_FILE_EXTENSIONS = {
+    ".jpg",
+    ".pdf",
+    ".png",
+    ".jpeg",
+    ".doc",
+    ".docx",
+    ".xlsx",
+    ".xls",
+    ".csv"
+}
 
 class AwsHelper:
 
@@ -18,6 +31,7 @@ class AwsHelper:
         files: List[Dict[str, bytes]],
         bucket: str,
         prefix: str,
+        database: str,
     ) -> List[Dict[str, Any]]:
         """
         Process list of dicts with keys:
@@ -28,83 +42,137 @@ class AwsHelper:
         and return metadata list:
           [{ 'filename': str, 'url': str, 'size': int }, ...]
         """
-        lval = await LvalConfig.load(settings.DB_AWS_TIPOLVAL)
+        try:
+            lval = await LvalConfig.load(settings.DB_AWS_TIPOLVAL, db_name=database)
 
-        s3 = boto3.client(
-            "s3",
-            aws_access_key_id=lval.get(settings.DB_AWS_KEY),
-            aws_secret_access_key=lval.get(settings.DB_AWS_SECRET),
-            region_name=lval.get(settings.DB_AWS_REGION)
-        )
+            aws_access_key_id = lval.get(settings.DB_AWS_KEY)
+            aws_secret_access_key = lval.get(settings.DB_AWS_SECRET)
+            region_name = lval.get(settings.DB_AWS_REGION)
 
-        results: List[Dict[str, Any]] = []
-        for item in files:
-            filename = item.get("filename")
-            blob = item.get("blob")
-            if not filename or blob is None:
-                continue
+            if not all([aws_access_key_id, aws_secret_access_key, region_name, bucket, prefix]):
+                raise ValueError(f"Configuración AWS S3 incompleta para la base de datos '{database}'.")
 
-            ext = os.path.splitext(filename)[1].lower()
-            data = blob
-            size: int = len(blob)
+            s3 = boto3.client(
+                "s3",
+                aws_access_key_id=aws_access_key_id,
+                aws_secret_access_key=aws_secret_access_key,
+                region_name=region_name
+            )
 
-            if ext == ".pdf":
-                data, size = compress_pdf_bytes(blob)
+            results: List[Dict[str, Any]] = []
+            for item in files:
+                filename = item.get("filename")
+                blob = item.get("blob")
+                if not filename or blob is None:
+                    continue
 
-            key = f"{prefix}{filename}"
-            s3.upload_fileobj(io.BytesIO(data), bucket, key)
-            uri = f"s3://{bucket}/{key}"
+                ext = os.path.splitext(filename)[1].lower()
+                if ext not in ALLOWED_FILE_EXTENSIONS:
+                    raise HttpErrors.bad_request(
+                        detail=f"Tipo de archivo no permitido para '{filename}'. "
+                               f"Extensiones válidas: {', '.join(ALLOWED_FILE_EXTENSIONS)}"
+                    )
+                print(f'ext f{ext}')
 
-            results.append({
-                'filename': filename,
-                'url': uri,
-                'size': size
-            })
+                data = blob
+                size: int = len(blob)
 
-        return results
+                if ext == ".pdf":
+                    data, size = compress_pdf_bytes(blob)
+
+                key = f"{prefix}{filename}"
+                s3.upload_fileobj(io.BytesIO(data), bucket, key)
+                uri = f"s3://{bucket}/{key}"
+
+                results.append({
+                    'filename': filename,
+                    'url': uri,
+                    'size': size
+                })
+
+            return results
+        except ClientError as e:
+            if "NoSuchBucket" in str(e):
+                raise HttpErrors.not_found(detail=f"Bucket S3 '{bucket}' no encontrado o no accesible: {e}")
+            elif "AccessDenied" in str(e):
+                raise HttpErrors.forbidden(detail=f"Permiso denegado para S3. Revise sus credenciales o políticas de Bucket: {e}")
+            else:
+                raise HttpErrors.internal_server_error(detail=f"Error del cliente S3 al subir archivos: {e}")
+        except ValueError as e:
+            raise HttpErrors.internal_server_error(detail=f"Error de configuración AWS: {e}")
+        except Exception as e:
+            raise HttpErrors.internal_server_error(detail=f"Error interno del servidor al subir a S3: {e}")
 
     @staticmethod
     async def send_email(from_addr: EmailStr,
                          to_addrs: List[EmailStr],
-                         cc: List[EmailStr],
-                         bcc: List[EmailStr],
-                         subject: str,
-                         body: Optional[str]      = None,
-                         html_body: Optional[str] = Form,
-                         attachments: List[str]  = None,
-                         ) -> Dict[str, Any]:
+                         cc: Optional[List[EmailStr]] = None,
+                         bcc: Optional[List[EmailStr]] = None,
+                         subject: str = None,
+                         body: Optional[str] = None,
+                         html_body: Optional[str] = None,
+                         attachments: Optional[List[str]] = None,
+                         tags: Optional[Dict[str, str]] = None,
+                         database: str = None) -> Dict[str, Any]:
         """
-        Encola un mensaje para envío vía SES, incluyendo las URLs de S3 generadas.
+        Encola un mensaje para envío vía SQS, incluyendo las URLs de S3 generadas.
         """
+        try:
+            lval = await LvalConfig.load(settings.DB_AWS_TIPOLVAL, db_name=database)
 
-        lval = await LvalConfig.load(settings.DB_AWS_TIPOLVAL)
+            aws_access_key_id = lval.get(settings.DB_AWS_KEY)
+            aws_secret_access_key = lval.get(settings.DB_AWS_SECRET)
+            region_name = lval.get(settings.DB_AWS_REGION)
+            queue_name = lval.get(settings.DB_AWS_QUEUE)
 
-        QUEUE_NAME: str = lval.get(settings.DB_AWS_QUEUE)
+            if not all([aws_access_key_id, aws_secret_access_key, region_name, queue_name]):
+                raise ValueError(f"Credenciales AWS SQS o nombre de cola incompletos para la base de datos '{database}'.")
 
-        # Cliente SQS
-        sqs = boto3.client(
-            "sqs",
-            aws_access_key_id=lval.get(settings.DB_AWS_KEY),
-            aws_secret_access_key=lval.get(settings.DB_AWS_SECRET),
-            region_name=lval.get(settings.DB_AWS_REGION)
-        )
+            sqs = boto3.client(
+                "sqs",
+                aws_access_key_id=aws_access_key_id,
+                aws_secret_access_key=aws_secret_access_key,
+                region_name=region_name
+            )
 
-        # Obtener la URL de la cola
-        QUEUE_URL:str = sqs.get_queue_url(QueueName=QUEUE_NAME)["QueueUrl"]
+            try:
+                QUEUE_URL:str = sqs.get_queue_url(QueueName=queue_name)["QueueUrl"]
+            except ClientError as e:
+                if "NonExistentQueue" in str(e):
+                    raise HttpErrors.not_found(detail=f"La cola SQS '{queue_name}' no existe: {e}")
+                elif "AccessDenied" in str(e):
+                    raise HttpErrors.forbidden(detail=f"Permiso denegado para acceder a la cola SQS '{queue_name}': {e}")
+                else:
+                    raise HttpErrors.internal_server_error(detail=f"Error al obtener URL de la cola SQS: {e}")
 
-        msg = {
-            "from": from_addr,
-            "to": to_addrs,
-            "cc": cc or [],
-            "bcc": bcc or [],
-            "subject": subject,
-            "body": body or "",
-            "html_body": html_body or "",
-            "attachments": attachments or []
-        }
-        resp = sqs.send_message(
-            QueueUrl=QUEUE_URL,
-            MessageBody=json.dumps(msg, ensure_ascii=False)
-        )
-        return resp
+            message_attributes = {}
+            if tags:
+                for name, value in tags.items():
+                    message_attributes[name] = {
+                        "DataType":    "String",
+                        "StringValue": str(value)
+                    }
 
+            msg = {
+                "from": from_addr,
+                "to": to_addrs,
+                "cc": cc or [],
+                "bcc": bcc or [],
+                "subject": subject,
+                "body": body or "",
+                "html_body": html_body or "",
+                "attachments": attachments or [],
+            }
+
+            resp = sqs.send_message(
+                QueueUrl=QUEUE_URL,
+                MessageBody=json.dumps(msg, ensure_ascii=False),
+                MessageAttributes=message_attributes or None,
+            )
+            return resp
+        except ClientError as e:
+            raise HttpErrors.internal_server_error(detail=f"Error del cliente SQS al enviar email: {e}")
+        except ValueError as e:
+            raise HttpErrors.internal_server_error(detail=f"Error de configuración AWS/SQS: {e}")
+        except Exception as e:
+            raise HttpErrors.internal_server_error(detail=f"Error interno del servidor al enviar email: {e}")

@@ -5,25 +5,8 @@ services:
     container_name: mailBridge_service
     ports:
       - "8000:8000"
-    environment:
-      - ORACLE_INSTANT_CLIENT_DIR=/opt/oracle/instantclient
-      - CLIENT_LIB_DIR=/opt/oracle/instantclient
-      - DB_USER=${DB_USER}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_HOST=${DB_HOST}
-      - DB_AWS_KEY=${DB_AWS_KEY}
-      - DB_AWS_SECRET=${DB_AWS_SECRET}
-      - DB_AWS_REGION=${DB_AWS_REGION}
-      - DB_AWS_QUEUE=${DB_AWS_QUEUE}
-      - DB_AWS_BUCKET=${DB_AWS_BUCKET}
-      - DB_AWS_S3_PREFIX=${DB_AWS_S3_PREFIX}
-      - DB_STS_LVAL=${DB_STS_LVAL}
-      - DB_JWT_TIPOLVAL=${DB_JWT_TIPOLVAL}
-      - DB_USER_JWT=${DB_USER_JWT}
-      - DB_PASS_JWT=${DB_PASS_JWT}
-      - JWT_SECRET=${JWT_SECRET}
-      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES}
-      - JWT_ALGORITHM=${JWT_ALGORITHM}
+    env_file:
+      - .env
     restart: unless-stopped
     networks:
       - api_network

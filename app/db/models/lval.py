@@ -3,7 +3,7 @@ from app.db.oracle import Base
 
 class Lval(Base):
     __tablename__ = "LVAL"
-    __table_args__ = {"schema": "WWS"}
+    __table_args__ = {"schema": "ACSELD"}
 
     tipolval = Column("TIPOLVAL", String(8), primary_key=True)
     codlval  = Column("CODLVAL", String(100), primary_key=True)

@@ -43,5 +43,4 @@ uvicorn==0.34.3
 wrapt==1.17.2
 pydantic[email]
 uvicorn[standard]
-gunicorn==23.0.0
 orjson==3.10.18

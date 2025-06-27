@@ -1,4 +1,5 @@
 # app/core/auth_controller.py
+import re
 from datetime import datetime, timedelta
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -6,19 +7,36 @@ from jose import JWTError, jwt
 
 from app.core.config import settings
 from app.db.oracle import execute_query
+from app.schemas.Auth import MIN_PASSWORD_LENGTH, MAX_PASSWORD_LENGTH
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/login")
 
+def validate_password_strength(password: str):
+    """
+    Valida la fortaleza de la contraseña.
+    Lanza ValueError si la contraseña no cumple los requisitos.
+    """
+    if not MIN_PASSWORD_LENGTH <= len(password) <= MAX_PASSWORD_LENGTH:
+        raise ValueError(f"La contraseña debe tener entre {MIN_PASSWORD_LENGTH} y {MAX_PASSWORD_LENGTH} caracteres.")
+    if not re.search(r"[a-z]", password):
+        raise ValueError('La contraseña debe contener al menos una letra minúscula.')
+    if not re.search(r"[A-Z]", password):
+        raise ValueError('La contraseña debe contener al menos una letra mayúscula.')
+    if not re.search(r"\d", password):
+        raise ValueError('La contraseña debe contener al menos un número.')
+    if not re.search(r"[!@#$%^&*()_+\-=\[\]{};':\"\\|,.<>\/?~`]", password): # Asegúrate que este regex de símbolos es el mismo
+        raise ValueError('La contraseña debe contener al menos un carácter especial (!@#$%^&*()_+-=[]{};\':"\\|,.<>/?~`).')
+    return True
 
-async def load_jwt_credentials() -> tuple[str, str]:
+async def load_jwt_credentials(db_name: str) -> tuple[str, str]:
     """
     Lee usuario y password encriptado desde wws.lval con tu helper execute_query.
     """
     sql = """
       SELECT
-        MAX(CASE WHEN descrip = 'JWTUSER' THEN Encrypt_pkg.DECRYPT(codlval) END) AS usuario,
-        MAX(CASE WHEN descrip = 'JWTPASS' THEN Encrypt_pkg.DECRYPT(codlval) END) AS password
-      FROM ACSELD.lval
+        MAX(CASE WHEN codlval = 'JWTUSER' THEN Encrypt_pkg.DECRYPT(descrip) END) AS usuario,
+        MAX(CASE WHEN codlval = 'JWTPASS' THEN Encrypt_pkg.DECRYPT(descrip) END) AS password
+      FROM LVAL
      WHERE tipolval = :tipolval
        AND stslval  = :stslval
     """
@@ -27,7 +45,8 @@ async def load_jwt_credentials() -> tuple[str, str]:
         {
             "tipolval": settings.DB_JWT_TIPOLVAL,
             "stslval": settings.DB_STS_LVAL
-        }
+        },
+        db_name=db_name
     )
     if not rows:
         raise HTTPException(
@@ -38,8 +57,38 @@ async def load_jwt_credentials() -> tuple[str, str]:
     return row["USUARIO"], row["PASSWORD"]
 
 
-async def authenticate_user(username: str, password: str) -> bool:
-    db_user, db_pass = await load_jwt_credentials()
+async def authenticate_user(db_name: str, username: str, password: str) -> bool:
+
+    if db_name not in settings.AVAILABLE_DATABASES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"La base de datos '{db_name}' no es una opción válida."
+        )
+
+    if settings.APP_ENV == "prod":
+        if db_name not in settings.PROD_DATABASES:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Acceso denegado: No se puede acceder a la base de datos '{db_name}' "
+                       f"desde un entorno de PRODUCCIÓN."
+            )
+    elif settings.APP_ENV == "qa":
+        if db_name not in settings.QA_DATABASES:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Acceso denegado: No se puede acceder a la base de datos '{db_name}' "
+                       f"desde un entorno de QA."
+            )
+
+    try:
+        validate_password_strength(password)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+
+    db_user, db_pass = await load_jwt_credentials(db_name)
     return username == db_user and password == db_pass
 
 def create_access_token(*, subject: str) -> tuple[str, int]:

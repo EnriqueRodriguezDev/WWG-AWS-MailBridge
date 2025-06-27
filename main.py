@@ -60,7 +60,7 @@ def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
     openapi_schema = get_openapi(
-        title="MailBridge WorldWide Group & SMS AWS SQS Service", #app.title,
+        title="MailBridge WorldWide Group & EMAIL AWS SQS Service", #app.title,
         version='1.0', #app.version,
         description="API para administrar credenciales de AWS y tokens, comprimir y optimizar PDFs, subirlos a un bucket de S3 y encolar correos en SQS para envío vía SES.",
         routes=app.routes,
